@@ -18,59 +18,6 @@
  */
 package com.sk89q.worldguard.bukkit;
 
-import static com.sk89q.worldguard.bukkit.BukkitUtil.toVector;
-
-import java.util.Set;
-
-import org.bukkit.ChatColor;
-import org.bukkit.Location;
-import org.bukkit.World;
-import org.bukkit.block.Block;
-import org.bukkit.entity.Creeper;
-import org.bukkit.entity.EnderDragon;
-import org.bukkit.entity.EnderPearl;
-import org.bukkit.entity.Enderman;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.EntityType;
-import org.bukkit.entity.Fireball;
-import org.bukkit.entity.ItemFrame;
-import org.bukkit.entity.LivingEntity;
-import org.bukkit.entity.Player;
-import org.bukkit.entity.Projectile;
-import org.bukkit.entity.TNTPrimed;
-import org.bukkit.entity.Tameable;
-import org.bukkit.entity.ThrownPotion;
-import org.bukkit.entity.Wither;
-import org.bukkit.entity.WitherSkull;
-import org.bukkit.entity.Wolf;
-import org.bukkit.entity.minecart.ExplosiveMinecart;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
-import org.bukkit.event.Listener;
-import org.bukkit.event.entity.CreatureSpawnEvent;
-import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
-import org.bukkit.event.entity.CreeperPowerEvent;
-import org.bukkit.event.entity.EntityBreakDoorEvent;
-import org.bukkit.event.entity.EntityChangeBlockEvent;
-import org.bukkit.event.entity.EntityCombustEvent;
-import org.bukkit.event.entity.EntityCreatePortalEvent;
-import org.bukkit.event.entity.EntityDamageByBlockEvent;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
-import org.bukkit.event.entity.EntityDeathEvent;
-import org.bukkit.event.entity.EntityExplodeEvent;
-import org.bukkit.event.entity.EntityInteractEvent;
-import org.bukkit.event.entity.EntityRegainHealthEvent;
-import org.bukkit.event.entity.ExpBottleEvent;
-import org.bukkit.event.entity.ExplosionPrimeEvent;
-import org.bukkit.event.entity.FoodLevelChangeEvent;
-import org.bukkit.event.entity.PigZapEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
-import org.bukkit.event.entity.PotionSplashEvent;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.potion.PotionEffect;
-
 import com.sk89q.worldedit.Vector;
 import com.sk89q.worldedit.blocks.BlockID;
 import com.sk89q.worldguard.LocalPlayer;
@@ -80,6 +27,24 @@ import com.sk89q.worldguard.protection.GlobalRegionManager;
 import com.sk89q.worldguard.protection.events.DisallowedPVPEvent;
 import com.sk89q.worldguard.protection.flags.DefaultFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
+import org.bukkit.ChatColor;
+import org.bukkit.Location;
+import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.entity.*;
+import org.bukkit.entity.minecart.ExplosiveMinecart;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.*;
+import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.potion.PotionEffect;
+
+import java.util.Set;
+
+import static com.sk89q.worldguard.bukkit.BukkitUtil.toVector;
 
 /**
  * Listener for entity related events.
@@ -417,14 +382,19 @@ public class WorldGuardEntityListener implements Listener {
             // Check Mob
             if (attacker != null && !(attacker instanceof Player)) {
                 if (wcfg.disableMobDamage) {
+                    if(attacker.getType() == EntityType.SKELETON)
+                        removeEntityArrow((Projectile) event.getDamager());
                     event.setCancelled(true);
                     return;
                 }
+
                 if (wcfg.useRegions) {
                     Vector pt = toVector(defender.getLocation());
                     RegionManager mgr = plugin.getGlobalRegionManager().get(player.getWorld());
 
                     if (!mgr.getApplicableRegions(pt).allows(DefaultFlag.MOB_DAMAGE, localPlayer)) {
+                        if(attacker.getType() == EntityType.SKELETON)
+                            removeEntityArrow((Projectile) event.getDamager());
                         event.setCancelled(true);
                         return;
                     }
@@ -440,11 +410,10 @@ public class WorldGuardEntityListener implements Listener {
                     Vector pt2 = toVector(attacker.getLocation());
                     RegionManager mgr = plugin.getGlobalRegionManager().get(player.getWorld());
 
-                    if (!mgr.getApplicableRegions(pt2).allows(DefaultFlag.PVP, plugin.wrapPlayer((Player) attacker))) {
-                        tryCancelPVPEvent((Player) attacker, player, event, true);
-                    } else if (!mgr.getApplicableRegions(pt).allows(DefaultFlag.PVP, localPlayer)) {
-                        tryCancelPVPEvent((Player) attacker, player, event, false);
-                    }
+                    if((!mgr.getApplicableRegions(pt2).allows(DefaultFlag.PVP, plugin.wrapPlayer((Player) attacker)) ||
+                            !mgr.getApplicableRegions(pt).allows(DefaultFlag.PVP, localPlayer)) &&
+                            tryCancelPVPEvent((Player) attacker, player, event, true))
+                        removeEntityArrow((Projectile) event.getDamager());
                 }
             }
         } else if (defender instanceof ItemFrame) {
@@ -995,14 +964,18 @@ public class WorldGuardEntityListener implements Listener {
      * @param defendingPlayer The defender
      * @param event The event that caused WorldGuard to act
      */
-    public void tryCancelPVPEvent(final Player attackingPlayer, final Player defendingPlayer, EntityDamageByEntityEvent event, boolean aggressorTriggered) {
+    public boolean tryCancelPVPEvent(final Player attackingPlayer, final Player defendingPlayer, EntityDamageByEntityEvent event, boolean aggressorTriggered) {
         final DisallowedPVPEvent disallowedPVPEvent = new DisallowedPVPEvent(attackingPlayer, defendingPlayer, event);
         plugin.getServer().getPluginManager().callEvent(disallowedPVPEvent);
         if (!disallowedPVPEvent.isCancelled()) {
             if (aggressorTriggered) attackingPlayer.sendMessage(ChatColor.DARK_RED + "You are in a no-PvP area.");
             else attackingPlayer.sendMessage(ChatColor.DARK_RED + "That player is in a no-PvP area.");
             event.setCancelled(true);
+
+            return true;
         }
+
+        return false;
     }
 
     /**
@@ -1039,6 +1012,11 @@ public class WorldGuardEntityListener implements Listener {
             return true;
         }
         return false;
+    }
+
+    public void removeEntityArrow(Projectile projectile) {
+        if(projectile instanceof Arrow)
+            projectile.remove();
     }
 
 }
